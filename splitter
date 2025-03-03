@@ -1,0 +1,42 @@
+import cv2
+import numpy as np
+import os
+script_dir = os.path.dirname(os.path.abspath(__file__))  # 獲取腳本的目錄
+os.chdir(script_dir)
+
+def extract_sprites(image_path, output_folder, min_size=50):
+    # 確保輸出資料夾存在
+    os.makedirs(output_folder, exist_ok=True)
+    
+    # 讀取圖片，轉換為灰度並二值化
+    image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+    if image is None:
+        print("無法讀取圖片！")
+        return
+    
+    # 如果有透明通道，使用 alpha 作為二值化依據
+    if image.shape[2] == 4:
+        alpha = image[:, :, 3]
+        _, binary = cv2.threshold(alpha, 1, 255, cv2.THRESH_BINARY)
+    else:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        _, binary = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)
+    
+    # 查找輪廓
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    sprite_count = 0
+    for i, contour in enumerate(contours):
+        x, y, w, h = cv2.boundingRect(contour)
+        
+        # 只處理符合最小尺寸的區塊
+        if w >= min_size and h >= min_size:
+            sprite = image[y:y+h, x:x+w]
+            output_path = os.path.join(output_folder, f'sprite_{sprite_count}.png')
+            cv2.imwrite(output_path, sprite)
+            sprite_count += 1
+    
+    print(f"提取完成，共保存 {sprite_count} 張精靈圖片。")
+
+# 使用範例
+extract_sprites("forture1.png", "output_sprites")
