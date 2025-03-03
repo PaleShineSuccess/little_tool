@@ -61,7 +61,8 @@ class ResourceManager:
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.load_page()
+        # 等待窗口初始化完成後再加載頁面
+        self.root.after(100, self.load_page)
 
     def load_page(self):
         # 清空當前內容
@@ -76,8 +77,10 @@ class ResourceManager:
 
         # 計算群組和格子的寬度
         screen_width = self.root.winfo_width()
+        if screen_width == 1:  # 如果窗口寬度尚未初始化，設置默認值
+            screen_width = 800
         group_width = screen_width // group_cols
-        item_width = group_width // item_cols
+        item_width = max(50, group_width // item_cols)  # 設置最小寬度為 50
 
         # 添加群組
         for group_index, group in enumerate(page["groups"]):
@@ -86,7 +89,7 @@ class ResourceManager:
 
             # 添加群組內的按鈕
             group_button_frame = tk.Frame(group_frame)
-            group_button_frame.pack(fill=tk.X)
+            group_button_frame.grid(row=0, column=0, columnspan=item_cols, sticky="ew")
 
             add_item_button = tk.Button(group_button_frame, text="新增格子", command=lambda g=group_index: self.add_item(g))
             add_item_button.pack(side=tk.LEFT, padx=5, pady=5)
@@ -100,7 +103,7 @@ class ResourceManager:
             # 添加格子
             for item_index, item in enumerate(group["items"]):
                 item_frame = tk.Frame(group_frame)
-                item_frame.grid(row=(item_index // item_cols), column=item_index % item_cols, padx=5, pady=5)
+                item_frame.grid(row=(item_index // item_cols) + 1, column=item_index % item_cols, padx=5, pady=5)
 
                 # 圖片
                 if os.path.exists(item["path"]):
@@ -150,7 +153,7 @@ class ResourceManager:
 
         # 找到對應的 item_frame
         group_frame = self.scrollable_frame.grid_slaves(row=group_idx // int(page["shape"].split("x")[0]), column=group_idx % int(page["shape"].split("x")[0]))[0]
-        item_frame = group_frame.grid_slaves(row=(item_idx // int(page["shape"].split("x")[1])), column=item_idx % int(page["shape"].split("x")[1]))[0]
+        item_frame = group_frame.grid_slaves(row=(item_idx // int(page["shape"].split("x")[1])) + 1, column=item_idx % int(page["shape"].split("x")[1]))[0]
 
         # 更新數量顯示
         now_label = item_frame.winfo_children()[1]
