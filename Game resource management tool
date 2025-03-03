@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import filedialog, simpledialog, messagebox
+from PIL import Image, ImageTk
 import json
 import os
 
@@ -71,15 +72,21 @@ class ResourceManager:
             return
 
         page = self.pages[self.current_page_index]
-        rows, cols = map(int, page["shape"].split("x"))
+        group_cols, item_cols = map(int, page["shape"].split("x"))
 
+        # 計算群組和格子的寬度
+        screen_width = self.root.winfo_width()
+        group_width = screen_width // group_cols
+        item_width = group_width // item_cols
+
+        # 添加群組
         for group_index, group in enumerate(page["groups"]):
             group_frame = tk.LabelFrame(self.scrollable_frame, text=group["name"])
-            group_frame.pack(fill=tk.X, padx=10, pady=5)
+            group_frame.grid(row=group_index // group_cols, column=group_index % group_cols, padx=10, pady=10, sticky="nsew")
 
             # 添加群組內的按鈕
             group_button_frame = tk.Frame(group_frame)
-            group_button_frame.grid(row=0, column=0, columnspan=cols, sticky="ew")
+            group_button_frame.pack(fill=tk.X)
 
             add_item_button = tk.Button(group_button_frame, text="新增格子", command=lambda g=group_index: self.add_item(g))
             add_item_button.pack(side=tk.LEFT, padx=5, pady=5)
@@ -90,23 +97,26 @@ class ResourceManager:
             batch_add_button = tk.Button(group_button_frame, text="批量加載圖片", command=lambda g=group_index: self.batch_add_images(g))
             batch_add_button.pack(side=tk.LEFT, padx=5, pady=5)
 
+            # 添加格子
             for item_index, item in enumerate(group["items"]):
                 item_frame = tk.Frame(group_frame)
-                item_frame.grid(row=(item_index // cols) + 1, column=item_index % cols, padx=5, pady=5)
+                item_frame.grid(row=(item_index // item_cols), column=item_index % item_cols, padx=5, pady=5)
 
                 # 圖片
                 if os.path.exists(item["path"]):
-                    img = tk.PhotoImage(file=item["path"])
+                    img = Image.open(item["path"])
+                    img.thumbnail((item_width, item_width))  # 縮放圖片以適應格子大小
+                    img = ImageTk.PhotoImage(img)
                     img_label = tk.Label(item_frame, image=img)
                     img_label.image = img
-                    img_label.pack(side='top')
+                    img_label.pack(side="top")
 
                 # 名稱和數量
                 name_label = tk.Label(item_frame, text=item["name"])
-                name_label.pack(side='top')
+                name_label.pack(side="top")
 
                 now_label = tk.Label(item_frame, text=f"{item['now']}/{item['max']}")
-                now_label.pack(side='top')
+                now_label.pack(side="top")
 
                 # 根據數量設置顏色
                 if item["now"] < item["max"]:
@@ -139,8 +149,8 @@ class ResourceManager:
         item = group["items"][item_idx]
 
         # 找到對應的 item_frame
-        group_frame = self.scrollable_frame.winfo_children()[group_idx]
-        item_frame = group_frame.grid_slaves(row=(item_idx // int(page["shape"].split("x")[1])) + 1, column=item_idx % int(page["shape"].split("x")[1]))[0]
+        group_frame = self.scrollable_frame.grid_slaves(row=group_idx // int(page["shape"].split("x")[0]), column=group_idx % int(page["shape"].split("x")[0]))[0]
+        item_frame = group_frame.grid_slaves(row=(item_idx // int(page["shape"].split("x")[1])), column=item_idx % int(page["shape"].split("x")[1]))[0]
 
         # 更新數量顯示
         now_label = item_frame.winfo_children()[1]
