@@ -29,8 +29,13 @@ class ResourceManager:
         self.add_page_button = tk.Button(self.button_frame, text="新增分頁", command=self.add_page)
         self.add_page_button.pack(side=tk.LEFT, padx=5, pady=5)
 
-        self.page_switch_button = tk.Button(self.button_frame, text="切換分頁", command=self.switch_page)
-        self.page_switch_button.pack(side=tk.LEFT, padx=5, pady=5)
+        self.page_switch_var = tk.StringVar(self.root)
+        self.page_switch_var.set("選擇分頁")
+        self.page_switch_menu = tk.OptionMenu(self.button_frame, self.page_switch_var, *[page["page_id"] for page in self.pages], command=self.switch_page)
+        self.page_switch_menu.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.add_group_button = tk.Button(self.button_frame, text="新增群組", command=self.add_group)
+        self.add_group_button.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.import_button = tk.Button(self.button_frame, text="導入數據", command=self.import_data)
         self.import_button.pack(side=tk.LEFT, padx=5, pady=5)
@@ -94,14 +99,14 @@ class ResourceManager:
                     img = tk.PhotoImage(file=item["path"])
                     img_label = tk.Label(item_frame, image=img)
                     img_label.image = img
-                    img_label.pack(side=tk.LEFT)
+                    img_label.pack(side='top')
 
                 # 名稱和數量
                 name_label = tk.Label(item_frame, text=item["name"])
-                name_label.pack(side=tk.LEFT)
+                name_label.pack(side='top')
 
                 now_label = tk.Label(item_frame, text=f"{item['now']}/{item['max']}")
-                now_label.pack(side=tk.LEFT)
+                now_label.pack(side='top')
 
                 # 根據數量設置顏色
                 if item["now"] < item["max"]:
@@ -125,7 +130,30 @@ class ResourceManager:
         item = self.pages[page_idx]["groups"][group_idx]["items"][item_idx]
         item["now"] = max(0, item["now"] + delta)
         self.save_data()
-        self.load_page()
+        self.update_item_display(page_idx, group_idx, item_idx)
+
+    def update_item_display(self, page_idx, group_idx, item_idx):
+        # 只更新指定格子的顯示
+        page = self.pages[page_idx]
+        group = page["groups"][group_idx]
+        item = group["items"][item_idx]
+
+        # 找到對應的 item_frame
+        group_frame = self.scrollable_frame.winfo_children()[group_idx]
+        item_frame = group_frame.grid_slaves(row=(item_idx // int(page["shape"].split("x")[1])) + 1, column=item_idx % int(page["shape"].split("x")[1]))[0]
+
+        # 更新數量顯示
+        now_label = item_frame.winfo_children()[1]
+        now_label.config(text=f"{item['now']}/{item['max']}")
+
+        # 更新顏色
+        if item["now"] < item["max"]:
+            now_label.config(fg="red")
+        elif item["now"] == item["max"]:
+            now_label.config(fg="yellow")
+        else:
+            now_label.config(fg="orange")
+            item_frame.config(bg="#ffcccc")
 
     def add_page(self):
         page_name = simpledialog.askstring("新增分頁", "輸入分頁名稱：")
@@ -134,16 +162,17 @@ class ResourceManager:
             if shape:
                 self.pages.append({"page_id": page_name, "shape": shape, "groups": []})
                 self.current_page_index = len(self.pages) - 1
+                self.page_switch_menu["menu"].add_command(label=page_name, command=lambda p=page_name: self.switch_page(p))
+                self.page_switch_var.set(page_name)
                 self.save_data()
                 self.load_page()
 
-    def switch_page(self):
+    def switch_page(self, page_name):
         if not self.pages:
             return
         page_names = [page["page_id"] for page in self.pages]
-        selected_page = simpledialog.askstring("切換分頁", f"輸入分頁名稱（可選：{', '.join(page_names)}）：")
-        if selected_page in page_names:
-            self.current_page_index = page_names.index(selected_page)
+        if page_name in page_names:
+            self.current_page_index = page_names.index(page_name)
             self.load_page()
 
     def delete_page(self, page_idx):
