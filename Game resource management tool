@@ -1,0 +1,228 @@
+import tkinter as tk
+from tkinter import filedialog, simpledialog, messagebox
+import json
+import os
+
+class ResourceManager:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("資源管理工具")
+        self.pages = []
+        self.current_page_index = 0
+        self.load_data()
+        self.create_widgets()
+
+    def load_data(self):
+        if os.path.exists("data.json"):
+            with open("data.json", "r", encoding="utf-8") as f:
+                self.pages = json.load(f)
+
+    def save_data(self):
+        with open("data.json", "w", encoding="utf-8") as f:
+            json.dump(self.pages, f, ensure_ascii=False, indent=4)
+
+    def create_widgets(self):
+        # 頂部按鈕欄
+        self.button_frame = tk.Frame(self.root)
+        self.button_frame.pack(fill=tk.X)
+
+        self.add_page_button = tk.Button(self.button_frame, text="新增分頁", command=self.add_page)
+        self.add_page_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.page_switch_button = tk.Button(self.button_frame, text="切換分頁", command=self.switch_page)
+        self.page_switch_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.import_button = tk.Button(self.button_frame, text="導入數據", command=self.import_data)
+        self.import_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+        self.export_button = tk.Button(self.button_frame, text="導出數據", command=self.export_data)
+        self.export_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+        # 主內容區域
+        self.frame = tk.Frame(self.root)
+        self.frame.pack(fill=tk.BOTH, expand=True)
+
+        self.canvas = tk.Canvas(self.frame)
+        self.scrollbar = tk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.scrollable_frame = tk.Frame(self.canvas)
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.load_page()
+
+    def load_page(self):
+        # 清空當前內容
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+
+        if not self.pages:
+            return
+
+        page = self.pages[self.current_page_index]
+        rows, cols = map(int, page["shape"].split("x"))
+
+        for group_index, group in enumerate(page["groups"]):
+            group_frame = tk.LabelFrame(self.scrollable_frame, text=group["name"])
+            group_frame.pack(fill=tk.X, padx=10, pady=5)
+
+            # 添加群組內的按鈕
+            group_button_frame = tk.Frame(group_frame)
+            group_button_frame.grid(row=0, column=0, columnspan=cols, sticky="ew")
+
+            add_item_button = tk.Button(group_button_frame, text="新增格子", command=lambda g=group_index: self.add_item(g))
+            add_item_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+            delete_group_button = tk.Button(group_button_frame, text="刪除群組", command=lambda g=group_index: self.delete_group(g))
+            delete_group_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+            batch_add_button = tk.Button(group_button_frame, text="批量加載圖片", command=lambda g=group_index: self.batch_add_images(g))
+            batch_add_button.pack(side=tk.LEFT, padx=5, pady=5)
+
+            for item_index, item in enumerate(group["items"]):
+                item_frame = tk.Frame(group_frame)
+                item_frame.grid(row=(item_index // cols) + 1, column=item_index % cols, padx=5, pady=5)
+
+                # 圖片
+                if os.path.exists(item["path"]):
+                    img = tk.PhotoImage(file=item["path"])
+                    img_label = tk.Label(item_frame, image=img)
+                    img_label.image = img
+                    img_label.pack(side=tk.LEFT)
+
+                # 名稱和數量
+                name_label = tk.Label(item_frame, text=item["name"])
+                name_label.pack(side=tk.LEFT)
+
+                now_label = tk.Label(item_frame, text=f"{item['now']}/{item['max']}")
+                now_label.pack(side=tk.LEFT)
+
+                # 根據數量設置顏色
+                if item["now"] < item["max"]:
+                    now_label.config(fg="red")
+                elif item["now"] == item["max"]:
+                    now_label.config(fg="yellow")
+                else:
+                    now_label.config(fg="orange")
+                    item_frame.config(bg="#ffcccc")
+
+                # 按鈕
+                minus_button = tk.Button(item_frame, text="-", command=lambda p=self.current_page_index, g=group_index, i=item_index: self.change_quantity(p, g, i, -1))
+                minus_button.pack(side=tk.LEFT)
+                plus_button = tk.Button(item_frame, text="+", command=lambda p=self.current_page_index, g=group_index, i=item_index: self.change_quantity(p, g, i, 1))
+                plus_button.pack(side=tk.LEFT)
+
+                delete_item_button = tk.Button(item_frame, text="刪除", command=lambda p=self.current_page_index, g=group_index, i=item_index: self.delete_item(p, g, i))
+                delete_item_button.pack(side=tk.LEFT)
+
+    def change_quantity(self, page_idx, group_idx, item_idx, delta):
+        item = self.pages[page_idx]["groups"][group_idx]["items"][item_idx]
+        item["now"] = max(0, item["now"] + delta)
+        self.save_data()
+        self.load_page()
+
+    def add_page(self):
+        page_name = simpledialog.askstring("新增分頁", "輸入分頁名稱：")
+        if page_name:
+            shape = simpledialog.askstring("設置佈局", "輸入佈局（如 3x5）：")
+            if shape:
+                self.pages.append({"page_id": page_name, "shape": shape, "groups": []})
+                self.current_page_index = len(self.pages) - 1
+                self.save_data()
+                self.load_page()
+
+    def switch_page(self):
+        if not self.pages:
+            return
+        page_names = [page["page_id"] for page in self.pages]
+        selected_page = simpledialog.askstring("切換分頁", f"輸入分頁名稱（可選：{', '.join(page_names)}）：")
+        if selected_page in page_names:
+            self.current_page_index = page_names.index(selected_page)
+            self.load_page()
+
+    def delete_page(self, page_idx):
+        if not self.pages:
+            return
+        self.pages.pop(page_idx)
+        if self.current_page_index >= len(self.pages):
+            self.current_page_index = max(0, len(self.pages) - 1)
+        self.save_data()
+        self.load_page()
+
+    def add_group(self):
+        if not self.pages:
+            messagebox.showwarning("警告", "請先新增分頁！")
+            return
+
+        group_name = simpledialog.askstring("新增群組", "輸入群組名稱：")
+        if group_name:
+            self.pages[self.current_page_index]["groups"].append({"name": group_name, "items": []})
+            self.save_data()
+            self.load_page()
+
+    def delete_group(self, group_idx):
+        if not self.pages or not self.pages[self.current_page_index]["groups"]:
+            return
+        self.pages[self.current_page_index]["groups"].pop(group_idx)
+        self.save_data()
+        self.load_page()
+
+    def add_item(self, group_idx):
+        if not self.pages or not self.pages[self.current_page_index]["groups"]:
+            messagebox.showwarning("警告", "請先新增分頁和群組！")
+            return
+
+        item_name = simpledialog.askstring("新增格子", "輸入格子名稱：")
+        item_path = filedialog.askopenfilename(title="選擇圖片", filetypes=[("圖片文件", "*.png;*.jpg;*.jpeg")])
+        if item_name and item_path:
+            self.pages[self.current_page_index]["groups"][group_idx]["items"].append(
+                {"name": item_name, "path": item_path, "now": 0, "max": 9}
+            )
+            self.save_data()
+            self.load_page()
+
+    def batch_add_images(self, group_idx):
+        if not self.pages or not self.pages[self.current_page_index]["groups"]:
+            messagebox.showwarning("警告", "請先新增分頁和群組！")
+            return
+
+        file_paths = filedialog.askopenfilenames(title="選擇圖片", filetypes=[("圖片文件", "*.png;*.jpg;*.jpeg")])
+        for path in file_paths:
+            item_name = os.path.basename(path).split(".")[0]
+            self.pages[self.current_page_index]["groups"][group_idx]["items"].append(
+                {"name": item_name, "path": path, "now": 0, "max": 9}
+            )
+        self.save_data()
+        self.load_page()
+
+    def delete_item(self, page_idx, group_idx, item_idx):
+        if not self.pages or not self.pages[page_idx]["groups"] or not self.pages[page_idx]["groups"][group_idx]["items"]:
+            return
+        self.pages[page_idx]["groups"][group_idx]["items"].pop(item_idx)
+        self.save_data()
+        self.load_page()
+
+    def import_data(self):
+        file_path = filedialog.askopenfilename(title="選擇數據文件", filetypes=[("JSON 文件", "*.json")])
+        if file_path:
+            with open(file_path, "r", encoding="utf-8") as f:
+                self.pages = json.load(f)
+            self.save_data()
+            self.load_page()
+
+    def export_data(self):
+        file_path = filedialog.asksaveasfilename(title="保存數據文件", defaultextension=".json", filetypes=[("JSON 文件", "*.json")])
+        if file_path:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(self.pages, f, ensure_ascii=False, indent=4)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ResourceManager(root)
+    root.mainloop()
