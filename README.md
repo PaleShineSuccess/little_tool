@@ -16,3 +16,6 @@ Game resource management tool
 splitter
 
 使用opencv，拆分透明背景的不規則物件，從一張拆分成多個單獨圖片
+
+
+本庫部分工具使用了 PySide6（LGPL 授權）。詳見 https://doc.qt.io/qtforpython/
