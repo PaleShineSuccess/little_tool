@@ -2,7 +2,7 @@
 just some tool make life easier
 
 
-#Game resource management tool
+# Game resource management tool
 
 分頁-群組-格子
 
@@ -17,7 +17,7 @@ just some tool make life easier
 
 該工具使用了 PySide6（LGPL 授權）。詳見 https://doc.qt.io/qtforpython/
 
-#splitter
+# splitter
 
 使用opencv，拆分透明背景的不規則物件，從一張拆分成多個單獨圖片
 
