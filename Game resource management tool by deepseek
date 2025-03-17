@@ -3,13 +3,15 @@ from tkinter import filedialog, simpledialog, messagebox
 from PIL import Image, ImageTk
 import json
 import os
-
+script_dir = os.path.dirname(os.path.abspath(__file__))  # 獲取腳本的目錄
+os.chdir(script_dir)
 class ResourceManager:
     def __init__(self, root):
         self.root = root
         self.root.title("資源管理工具")
         self.pages = []
         self.current_page_index = 0
+        self.image_cache = {}  # 圖片緩存
         self.load_data()
         self.create_widgets()
 
@@ -31,8 +33,13 @@ class ResourceManager:
         self.add_page_button.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.page_switch_var = tk.StringVar(self.root)
-        self.page_switch_var.set("選擇分頁")
-        self.page_switch_menu = tk.OptionMenu(self.button_frame, self.page_switch_var, *[page["page_id"] for page in self.pages], command=self.switch_page)
+        self.page_switch_var.set("選擇分頁")  # 設置默認值
+        self.page_switch_menu = tk.OptionMenu(
+            self.button_frame,
+            self.page_switch_var,
+            *[page["page_id"] for page in self.pages],
+            command=self.switch_page
+        )
         self.page_switch_menu.pack(side=tk.LEFT, padx=5, pady=5)
 
         self.add_group_button = tk.Button(self.button_frame, text="新增群組", command=self.add_group)
@@ -54,7 +61,8 @@ class ResourceManager:
 
         self.scrollable_frame.bind(
             "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
         self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
@@ -107,19 +115,26 @@ class ResourceManager:
 
                 # 圖片
                 if os.path.exists(item["path"]):
-                    img = Image.open(item["path"])
-                    img.thumbnail((item_width, item_width))  # 縮放圖片以適應格子大小
-                    img = ImageTk.PhotoImage(img)
-                    img_label = tk.Label(item_frame, image=img)
-                    img_label.image = img
+                    if item["path"] not in self.image_cache:
+                        img = Image.open(item["path"])
+                        img.thumbnail((item_width, item_width))  # 縮放圖片以適應格子大小
+                        self.image_cache[item["path"]] = ImageTk.PhotoImage(img)
+                    img_label = tk.Label(item_frame, image=self.image_cache[item["path"]])
+                    img_label.image = self.image_cache[item["path"]]
                     img_label.pack(side="top")
 
                 # 名稱和數量
                 name_label = tk.Label(item_frame, text=item["name"])
                 name_label.pack(side="top")
 
-                now_label = tk.Label(item_frame, text=f"{item['now']}/{item['max']}")
+                now_label = tk.Label(item_frame, text=f"{item['now']}/")
                 now_label.pack(side="top")
+
+                # 可編輯的最大數量
+                max_var = tk.StringVar(value=str(item["max"]))
+                max_entry = tk.Entry(item_frame, textvariable=max_var, width=3)
+                max_entry.bind("<Return>", lambda e, p=self.current_page_index, g=group_index, i=item_index, v=max_var: self.update_max(p, g, i, v))
+                max_entry.pack(side="top")
 
                 # 根據數量設置顏色
                 if item["now"] < item["max"]:
@@ -139,6 +154,42 @@ class ResourceManager:
                 delete_item_button = tk.Button(item_frame, text="刪除", command=lambda p=self.current_page_index, g=group_index, i=item_index: self.delete_item(p, g, i))
                 delete_item_button.pack(side=tk.LEFT)
 
+                # 拖曳功能
+                item_frame.bind("<Button-1>", lambda e, p=self.current_page_index, g=group_index, i=item_index: self.start_drag(p, g, i))
+                item_frame.bind("<B1-Motion>", lambda e, p=self.current_page_index, g=group_index, i=item_index: self.on_drag(p, g, i))
+                item_frame.bind("<ButtonRelease-1>", lambda e, p=self.current_page_index, g=group_index, i=item_index: self.end_drag(p, g, i))
+
+    def start_drag(self, page_idx, group_idx, item_idx):
+        self.drag_data = {"page_idx": page_idx, "group_idx": group_idx, "item_idx": item_idx}
+
+    def on_drag(self, page_idx, group_idx, item_idx):
+        pass  # 拖曳過程中不需要特別處理
+
+    def end_drag(self, page_idx, group_idx, item_idx):
+        if not hasattr(self, "drag_data"):
+            return
+
+        target_page_idx = self.drag_data["page_idx"]
+        target_group_idx = self.drag_data["group_idx"]
+        target_item_idx = self.drag_data["item_idx"]
+
+        # 移動格子
+        item = self.pages[target_page_idx]["groups"][target_group_idx]["items"].pop(target_item_idx)
+        self.pages[page_idx]["groups"][group_idx]["items"].insert(item_idx, item)
+        self.save_data()
+        self.load_page()
+
+    def update_max(self, page_idx, group_idx, item_idx, max_var):
+        try:
+            max_value = int(max_var.get())
+            if max_value < 0:
+                raise ValueError
+            self.pages[page_idx]["groups"][group_idx]["items"][item_idx]["max"] = max_value
+            self.save_data()
+            self.update_item_display(page_idx, group_idx, item_idx)
+        except ValueError:
+            messagebox.showerror("錯誤", "請輸入有效的數字！")
+
     def change_quantity(self, page_idx, group_idx, item_idx, delta):
         item = self.pages[page_idx]["groups"][group_idx]["items"][item_idx]
         item["now"] = max(0, item["now"] + delta)
@@ -157,7 +208,7 @@ class ResourceManager:
 
         # 更新數量顯示
         now_label = item_frame.winfo_children()[1]
-        now_label.config(text=f"{item['now']}/{item['max']}")
+        now_label.config(text=f"{item['now']}/")
 
         # 更新顏色
         if item["now"] < item["max"]:
