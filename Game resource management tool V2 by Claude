@@ -1,801 +1,1044 @@
 import sys
 import os
 import csv
+import json
 import shutil
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                               QTabWidget, QPushButton, QLabel, QLineEdit, QMessageBox, 
-                               QFileDialog, QScrollArea, QFrame, QGridLayout, QSpinBox,QCheckBox, QProgressDialog,
-                               QDialog, QDialogButtonBox, QInputDialog)
-from PySide6.QtGui import QPixmap, QIcon, QColor, QPalette
-from PySide6.QtCore import Qt, QSize,QTimer
+from pathlib import Path
+from functools import partial
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                              QHBoxLayout, QPushButton, QTabWidget, QLabel, 
+                              QLineEdit, QScrollArea, QGridLayout, QFrame, 
+                              QMessageBox, QFileDialog, QDialog, QSpinBox,
+                              QGroupBox, QSizePolicy, QMenu, QInputDialog)
+from PySide6.QtGui import QPixmap, QImage, QIcon, QColor, QPalette, QAction,QFont
+from PySide6.QtCore import Qt, QSize, Signal, QMimeData
+from PySide6.QtCore import QSettings
+
 script_dir = os.path.dirname(os.path.abspath(__file__))  # 獲取腳本的目錄
 os.chdir(script_dir)
 
-class ItemWidget(QFrame):
-    def __init__(self, name="", image_path="", current_quantity=0, max_quantity=0, parent=None):
-        super().__init__(parent)
-        self.name = name if isinstance(name, str) else ""  # 確保 name 是字符串
-        self.image_path = image_path
-        self.current_quantity = current_quantity
-        self.max_quantity = max_quantity
+class Config:
+    def __init__(self):
+        self.settings = QSettings("ResourceManager", "ResourceManagerApp")
+        self.load_default_settings()
         
-        self.init_ui()
-        self.update_quantity_display()
-        
-    def init_ui(self):
-        main_layout = QVBoxLayout(self)
-        
-        # Name field
-        self.name_edit = QLineEdit(self.name)  # 確保 name 是字符串
-        self.name_edit.setAlignment(Qt.AlignCenter)
-        self.name_edit.textChanged.connect(self.update_name)
-        
-        # Image
-        self.image_label = QLabel()
-        self.image_label.setFixedSize(100, 100)
-        self.image_label.setAlignment(Qt.AlignCenter)
-        self.update_image()
-        
-        # Image selection button
-        self.image_button = QPushButton("選擇圖片")
-        self.image_button.clicked.connect(self.select_image)
-        
-        # Quantity controls
-        quantity_layout = QHBoxLayout()
-        
-        self.minus_button = QPushButton("-")
-        self.minus_button.setFixedSize(30, 30)
-        self.minus_button.clicked.connect(self.decrease_quantity)
-        
-        self.quantity_label = QLabel()
-        self.quantity_label.setAlignment(Qt.AlignCenter)
-        
-        self.plus_button = QPushButton("+")
-        self.plus_button.setFixedSize(30, 30)
-        self.plus_button.clicked.connect(self.increase_quantity)
-        
-        quantity_layout.addWidget(self.minus_button)
-        quantity_layout.addWidget(self.quantity_label)
-        quantity_layout.addWidget(self.plus_button)
-        
-        # Max quantity setting
-        max_layout = QHBoxLayout()
-        max_layout.addWidget(QLabel("最大數量:"))
-        
-        self.max_spinbox = QSpinBox()
-        self.max_spinbox.setRange(0, 9999)
-        self.max_spinbox.setValue(self.max_quantity)
-        self.max_spinbox.valueChanged.connect(self.update_max_quantity)
-        
-        max_layout.addWidget(self.max_spinbox)
-        
-        # Delete button
-        self.delete_button = QPushButton("刪除")
-        self.delete_button.clicked.connect(self.request_delete)
-        
-        # Add all to main layout
-        main_layout.addWidget(self.name_edit)
-        main_layout.addWidget(self.image_label)
-        main_layout.addWidget(self.image_button)
-        main_layout.addLayout(quantity_layout)
-        main_layout.addLayout(max_layout)
-        main_layout.addWidget(self.delete_button)
-        
-        # Set frame style
-        self.setFrameStyle(QFrame.Panel | QFrame.Raised)
-        self.setLineWidth(2)
-        
-    def request_delete(self):
-        reply = QMessageBox.question(
-            self, "確認刪除", f"確定要刪除「{self.name}」嗎？",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            # 尋找正確的父級來刪除該項目
-            parent = self.parent()
-            while parent and not hasattr(parent, 'remove_item'):
-                parent = parent.parent()
-                
-            if parent and hasattr(parent, 'remove_item'):
-                parent.remove_item(self)
-            else:
-                QMessageBox.warning(self, "錯誤", "無法找到正確的父級來刪除該項目")
+    def load_default_settings(self):
+        # Set default values if settings don't exist
+        if not self.settings.contains("grid_size"):
+            self.settings.setValue("grid_size", 100)
+        if not self.settings.contains("grid_width"):
+            self.settings.setValue("grid_width", 100)
+        if not self.settings.contains("grid_height"):
+            self.settings.setValue("grid_height", 120)
+        if not self.settings.contains("image_size"):
+            self.settings.setValue("image_size", 80)
+        if not self.settings.contains("group_columns"):
+            self.settings.setValue("group_columns", 3)
+        if not self.settings.contains("cell_columns"):
+            self.settings.setValue("cell_columns", 5)
+        if not self.settings.contains("zoom_level"):
+            self.settings.setValue("zoom_level", 100)
+        if not self.settings.contains("border_width"):
+            self.settings.setValue("border_width", 1)
+        if not self.settings.contains("padding"):
+            self.settings.setValue("padding", 5)
+        if not self.settings.contains("group_padding"):
+            self.settings.setValue("group_padding", 10)
+        if not self.settings.contains("element_spacing"):
+            self.settings.setValue("element_spacing", 5)
 
-    def __init__(self, name="", image_path="", current_quantity=0, max_quantity=0, parent=None):
+    def get_grid_width(self):
+        return self.settings.value("grid_width", type=int)
+
+    def get_grid_height(self):
+        return self.settings.value("grid_height", type=int)
+
+    def get_border_width(self):
+        return self.settings.value("border_width", type=int)
+
+    def get_padding(self):
+        return self.settings.value("padding", type=int)
+
+    def get_group_padding(self):
+        return self.settings.value("group_padding", type=int)
+
+    def get_element_spacing(self):
+        return self.settings.value("element_spacing", type=int)
+
+    def set_grid_width(self, value):
+        self.settings.setValue("grid_width", value)
+
+    def set_grid_height(self, value):
+        self.settings.setValue("grid_height", value)
+
+    def set_border_width(self, value):
+        self.settings.setValue("border_width", value)
+
+    def set_padding(self, value):
+        self.settings.setValue("padding", value)
+
+    def set_group_padding(self, value):
+        self.settings.setValue("group_padding", value)
+
+    def set_element_spacing(self, value):
+        self.settings.setValue("element_spacing", value)
+
+    def get_grid_size(self):
+        return self.settings.value("grid_size", type=int)
+    
+    def get_image_size(self):
+        return self.settings.value("image_size", type=int)
+    
+    def get_group_columns(self):
+        return self.settings.value("group_columns", type=int)
+    
+    def get_cell_columns(self):
+        return self.settings.value("cell_columns", type=int)
+    
+    def get_zoom_level(self):
+        return self.settings.value("zoom_level", type=int)
+    
+    def set_grid_size(self, value):
+        self.settings.setValue("grid_size", value)
+    
+    def set_image_size(self, value):
+        self.settings.setValue("image_size", value)
+    
+    def set_group_columns(self, value):
+        self.settings.setValue("group_columns", value)
+    
+    def set_cell_columns(self, value):
+        self.settings.setValue("cell_columns", value)
+    
+    def set_zoom_level(self, value):
+        self.settings.setValue("zoom_level", value)
+
+class ConfigDialog(QDialog):
+    def __init__(self, config, parent=None):
+        super().__init__(parent)
+        self.config = config
+        self.setWindowTitle("設置")
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        
+        # Create scroll area for many settings
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        
+        # Grid size settings (now with width and height)
+        grid_group = QGroupBox("格子設置")
+        grid_layout = QGridLayout()
+        
+        # Grid width
+        grid_width_label = QLabel("格子寬度:")
+        self.grid_width_spin = QSpinBox()
+        self.grid_width_spin.setRange(80, 500)
+        self.grid_width_spin.setValue(self.config.get_grid_width())
+        grid_layout.addWidget(grid_width_label, 0, 0)
+        grid_layout.addWidget(self.grid_width_spin, 0, 1)
+        
+        # Grid height
+        grid_height_label = QLabel("格子高度:")
+        self.grid_height_spin = QSpinBox()
+        self.grid_height_spin.setRange(80, 500)
+        self.grid_height_spin.setValue(self.config.get_grid_height())
+        grid_layout.addWidget(grid_height_label, 1, 0)
+        grid_layout.addWidget(self.grid_height_spin, 1, 1)
+        
+        # Image size setting
+        image_label = QLabel("圖片大小:")
+        self.image_size_spin = QSpinBox()
+        self.image_size_spin.setRange(30, 250)
+        self.image_size_spin.setValue(self.config.get_image_size())
+        grid_layout.addWidget(image_label, 2, 0)
+        grid_layout.addWidget(self.image_size_spin, 2, 1)
+        
+        grid_group.setLayout(grid_layout)
+        scroll_layout.addWidget(grid_group)
+        
+        # Layout settings
+        layout_group = QGroupBox("佈局設置")
+        layout_grid = QGridLayout()
+        
+        # Group columns setting
+        group_label = QLabel("分頁內每行顯示群組數:")
+        self.group_columns_spin = QSpinBox()
+        self.group_columns_spin.setRange(1, 10)
+        self.group_columns_spin.setValue(self.config.get_group_columns())
+        layout_grid.addWidget(group_label, 0, 0)
+        layout_grid.addWidget(self.group_columns_spin, 0, 1)
+        
+        # Cell columns setting
+        cell_label = QLabel("群組內每行顯示格子數:")
+        self.cell_columns_spin = QSpinBox()
+        self.cell_columns_spin.setRange(1, 15)
+        self.cell_columns_spin.setValue(self.config.get_cell_columns())
+        layout_grid.addWidget(cell_label, 1, 0)
+        layout_grid.addWidget(self.cell_columns_spin, 1, 1)
+        
+        # Border width
+        border_label = QLabel("邊框粗細:")
+        self.border_width_spin = QSpinBox()
+        self.border_width_spin.setRange(0, 10)
+        self.border_width_spin.setValue(self.config.get_border_width())
+        layout_grid.addWidget(border_label, 2, 0)
+        layout_grid.addWidget(self.border_width_spin, 2, 1)
+        
+        # Padding
+        padding_label = QLabel("內邊距:")
+        self.padding_spin = QSpinBox()
+        self.padding_spin.setRange(0, 20)
+        self.padding_spin.setValue(self.config.get_padding())
+        layout_grid.addWidget(padding_label, 3, 0)
+        layout_grid.addWidget(self.padding_spin, 3, 1)
+        
+        # Group padding
+        group_padding_label = QLabel("群組內邊距:")
+        self.group_padding_spin = QSpinBox()
+        self.group_padding_spin.setRange(0, 30)
+        self.group_padding_spin.setValue(self.config.get_group_padding())
+        layout_grid.addWidget(group_padding_label, 4, 0)
+        layout_grid.addWidget(self.group_padding_spin, 4, 1)
+        
+        # Element spacing
+        spacing_label = QLabel("元素間距:")
+        self.spacing_spin = QSpinBox()
+        self.spacing_spin.setRange(0, 20)
+        self.spacing_spin.setValue(self.config.get_element_spacing())
+        layout_grid.addWidget(spacing_label, 5, 0)
+        layout_grid.addWidget(self.spacing_spin, 5, 1)
+        
+        layout_group.setLayout(layout_grid)
+        scroll_layout.addWidget(layout_group)
+        
+        # Zoom level setting
+        zoom_group = QGroupBox("縮放設置")
+        zoom_layout = QHBoxLayout()
+        zoom_label = QLabel("頁面縮放比例 (%):")
+        self.zoom_level_spin = QSpinBox()
+        self.zoom_level_spin.setRange(50, 200)
+        self.zoom_level_spin.setValue(self.config.get_zoom_level())
+        self.zoom_level_spin.setSingleStep(10)
+        zoom_layout.addWidget(zoom_label)
+        zoom_layout.addWidget(self.zoom_level_spin)
+        zoom_group.setLayout(zoom_layout)
+        scroll_layout.addWidget(zoom_group)
+        
+        scroll_area.setWidget(scroll_content)
+        layout.addWidget(scroll_area)
+        
+        # Add validation note
+        validation_label = QLabel("注意：系統會自動檢查佈局參數合理性，避免填錯崩潰")
+        validation_label.setStyleSheet("color: red;")
+        layout.addWidget(validation_label)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        save_button = QPushButton("保存")
+        save_button.clicked.connect(self.validate_and_save)
+        cancel_button = QPushButton("取消")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(save_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+    def validate_and_save(self):
+        # Validate settings to prevent layout issues
+        grid_width = self.grid_width_spin.value()
+        image_size = self.image_size_spin.value()
+        cell_columns = self.cell_columns_spin.value()
+        
+        # Check that image fits in cell
+        if image_size > grid_width - 10:
+            QMessageBox.warning(self, "參數錯誤", 
+                            "圖片大小太大，無法適應格子寬度，請調小圖片或增加格子寬度")
+            return
+        
+        # Check that groups can fit cells
+        min_group_width = (cell_columns * (grid_width + 5)) + 20  # approximate minimum group width
+        
+        # Save validated settings
+        self.config.set_grid_width(self.grid_width_spin.value())
+        self.config.set_grid_height(self.grid_height_spin.value())
+        self.config.set_image_size(self.image_size_spin.value())
+        self.config.set_group_columns(self.group_columns_spin.value())
+        self.config.set_cell_columns(self.cell_columns_spin.value())
+        self.config.set_zoom_level(self.zoom_level_spin.value())
+        self.config.set_border_width(self.border_width_spin.value())
+        self.config.set_padding(self.padding_spin.value())
+        self.config.set_group_padding(self.group_padding_spin.value())
+        self.config.set_element_spacing(self.spacing_spin.value())
+        self.accept()
+        
+    def save_settings(self):
+        self.config.set_grid_size(self.grid_size_spin.value())
+        self.config.set_image_size(self.image_size_spin.value())
+        self.config.set_group_columns(self.group_columns_spin.value())
+        self.config.set_cell_columns(self.cell_columns_spin.value())
+        self.config.set_zoom_level(self.zoom_level_spin.value())
+        self.accept()
+
+class ResourceCell(QFrame):
+    swap_requested = Signal(object)
+    
+    def __init__(self, name, img_path, quantity, max_quantity, parent=None, config=None):
         super().__init__(parent)
         self.name = name
-        self.image_path = image_path
-        self.current_quantity = current_quantity
+        self.img_path = img_path
+        self.quantity = quantity
         self.max_quantity = max_quantity
+        self.config = config
+        self.swap_mode = False
+        self.setup_ui()
+        self.update_appearance()
         
-        self.init_ui()
-        self.update_quantity_display()
+    def setup_ui(self):
+        # 設置字體大小
+        font = QFont()
+        font.setPointSize(15)  # 設置字體大小為12
+        #self.setFont(font)
+
+        self.setFrameStyle(QFrame.Box | QFrame.Raised)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         
-    def init_ui(self):
+        grid_width = self.config.get_grid_width()
+        grid_height = self.config.get_grid_height()
+        
+        self.setMinimumSize(grid_width, grid_height)
+        self.setMaximumSize(grid_width, grid_height)
+        
         main_layout = QVBoxLayout(self)
         
         # Name field
         self.name_edit = QLineEdit(self.name)
         self.name_edit.setAlignment(Qt.AlignCenter)
-        self.name_edit.textChanged.connect(self.update_name)
+        #self.name_edit.setFont(font)  # 設置字體大小
+        main_layout.addWidget(self.name_edit)
         
         # Image
         self.image_label = QLabel()
-        self.image_label.setFixedSize(100, 100)
         self.image_label.setAlignment(Qt.AlignCenter)
-        self.update_image()
-        
-        # Image selection button
-        self.image_button = QPushButton("選擇圖片")
-        self.image_button.clicked.connect(self.select_image)
+        self.update_image()  # 確保圖片大小根據配置更新
+        main_layout.addWidget(self.image_label)
         
         # Quantity controls
         quantity_layout = QHBoxLayout()
         
-        self.minus_button = QPushButton("-")
-        self.minus_button.setFixedSize(30, 30)
-        self.minus_button.clicked.connect(self.decrease_quantity)
+        decrease_btn = QPushButton("-")
+        decrease_btn.setMaximumWidth(10)
+        decrease_btn.clicked.connect(self.decrease_quantity)
         
-        self.quantity_label = QLabel()
+        self.quantity_label = QLabel(f"{self.quantity}/{self.max_quantity}")
         self.quantity_label.setAlignment(Qt.AlignCenter)
+        self.quantity_label.setFont(font)  # 設置字體大小
+        increase_btn = QPushButton("+")
+        increase_btn.setMaximumWidth(10)
+        increase_btn.clicked.connect(self.increase_quantity)
         
-        self.plus_button = QPushButton("+")
-        self.plus_button.setFixedSize(30, 30)
-        self.plus_button.clicked.connect(self.increase_quantity)
-        
-        quantity_layout.addWidget(self.minus_button)
-        quantity_layout.addWidget(self.quantity_label)
-        quantity_layout.addWidget(self.plus_button)
-        
-        # Max quantity setting
-        max_layout = QHBoxLayout()
-        max_layout.addWidget(QLabel("最大數量:"))
-        
-        self.max_spinbox = QSpinBox()
-        self.max_spinbox.setRange(0, 9999)
-        self.max_spinbox.setValue(self.max_quantity)
-        self.max_spinbox.valueChanged.connect(self.update_max_quantity)
-        
-        max_layout.addWidget(self.max_spinbox)
-        
-        # Delete button
-        self.delete_button = QPushButton("刪除")
-        self.delete_button.clicked.connect(self.request_delete)
-        
-        # Add all to main layout
-        main_layout.addWidget(self.name_edit)
-        main_layout.addWidget(self.image_label)
-        main_layout.addWidget(self.image_button)
+        quantity1_layout = QHBoxLayout()
+        quantity1_layout.addWidget(self.quantity_label)
+        main_layout.addLayout(quantity1_layout)
+        quantity_layout.addWidget(decrease_btn)
+        quantity_layout.addWidget(increase_btn)
         main_layout.addLayout(quantity_layout)
-        main_layout.addLayout(max_layout)
-        main_layout.addWidget(self.delete_button)
         
-        # Set frame style
-        self.setFrameStyle(QFrame.Panel | QFrame.Raised)
-        self.setLineWidth(2)
+        # Max quantity controls
+        max_quantity_layout = QHBoxLayout()
+        max_quantity_label = QLabel("最大數量:")
+        #max_quantity_label.setFont(15)  # 設置字體大小
+        self.max_quantity_edit = QLineEdit(str(self.max_quantity))
+        self.max_quantity_edit.setAlignment(Qt.AlignCenter)
+        #self.max_quantity_edit.setValidator(QIntValidator(1, 9999))  # 限制輸入為1到9999的整數
+        self.max_quantity_edit.editingFinished.connect(self.update_max_quantity)
+        #self.max_quantity_edit.setFont(font)  # 設置字體大小
+        max_quantity_layout.addWidget(max_quantity_label)
+        max_quantity_layout.addWidget(self.max_quantity_edit)
+        main_layout.addLayout(max_quantity_layout)
+
+        # Control buttons
+        button_layout = QHBoxLayout()
         
-    def update_name(self, new_name):
-        self.name = new_name
+        swap_btn = QPushButton("交換")
+        swap_btn.clicked.connect(self.request_swap)
+        #swap_btn.setFont(font)  # 設置字體大小
+
+        delete_btn = QPushButton("刪除")
+        delete_btn.clicked.connect(self.delete_cell)
+        #delete_btn.setFont(font)  # 設置字體大小
+
+        button_layout.addWidget(swap_btn)
+        button_layout.addWidget(delete_btn)
+        main_layout.addLayout(button_layout)
         
+        self.setLayout(main_layout)
+
+
+    def update_max_quantity(self):
+        try:
+            new_max_quantity = int(self.max_quantity_edit.text())
+            if new_max_quantity > 0:
+                self.max_quantity = new_max_quantity
+                self.update_appearance()
+        except ValueError:
+            # 如果輸入無效，恢復原值
+            self.max_quantity_edit.setText(str(self.max_quantity))
+
     def update_image(self):
-        if self.image_path and os.path.exists(self.image_path):
-            pixmap = QPixmap(self.image_path)
-            pixmap = pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.image_label.setPixmap(pixmap)
+        image_size = self.config.get_image_size()
+        if os.path.exists(self.img_path):
+            pixmap = QPixmap(self.img_path)
+            # Calculate dimensions to maintain aspect ratio while fitting in the specified area
+            scaled_pixmap = pixmap.scaled(
+                image_size, image_size, 
+                Qt.KeepAspectRatio, 
+                Qt.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
+            # Center the image
+            self.image_label.setAlignment(Qt.AlignCenter)
         else:
-            self.image_label.setText("無圖片")
-            
-    def select_image(self):
-        image_path, _ = QFileDialog.getOpenFileName(
-            self, "選擇圖片", "", "圖片文件 (*.png *.jpg *.jpeg *.bmp)"
-        )
-        if image_path:
-            self.image_path = image_path
-            self.update_image()
-            
+            self.image_label.setText("圖片未找到")
+            self.image_label.setAlignment(Qt.AlignCenter)
+
+    def update_appearance(self):
+        # Set label text
+        self.quantity_label.setText(f"{self.quantity}/{self.max_quantity}")
+        
+        # Update color based on quantity
+        if self.quantity < self.max_quantity:
+            self.quantity_label.setStyleSheet("QLabel { color: red; }")
+        elif self.quantity == self.max_quantity:
+            self.quantity_label.setStyleSheet("QLabel { color: yellow; }")
+        else:  # greater than max
+            self.quantity_label.setStyleSheet("QLabel { color: yellow; }")
+            self.setStyleSheet("QFrame { background-color: #FFCCCC; }")
+            return
+        
+        self.setStyleSheet("")  # Reset background if not greater than max
+        
     def increase_quantity(self):
-        self.current_quantity += 1
-        self.update_quantity_display()
+        self.quantity += 1
+        self.update_appearance()
         
     def decrease_quantity(self):
-        if self.current_quantity > 0:
-            self.current_quantity -= 1
-            self.update_quantity_display()
+        if self.quantity > 0:
+            self.quantity -= 1
+            self.update_appearance()
             
-    def update_max_quantity(self, new_max):
-        self.max_quantity = new_max
-        self.update_quantity_display()
+    def request_swap(self):
+        self.swap_requested.emit(self)
         
-    def update_quantity_display(self):
-        self.quantity_label.setText(f"{self.current_quantity}/{self.max_quantity}")
-        
-        # Set colors based on quantity relationship
-        if self.current_quantity < self.max_quantity:
-            self.quantity_label.setStyleSheet("QLabel { color: red; } QLabel::section { color: white; }")
-            self.setStyleSheet("background-color: none;")
-        elif self.current_quantity == self.max_quantity:
-            self.quantity_label.setStyleSheet("QLabel { color: yellow; }")
-            self.setStyleSheet("background-color: none;")
-        else:  # current > max
-            self.quantity_label.setStyleSheet("QLabel { color: yellow; }")
-            self.setStyleSheet("background-color: rgba(255, 0, 0, 30);")
-            
-    def request_delete(self):
-        reply = QMessageBox.question(
-            self, "確認刪除", f"確定要刪除「{self.name}」嗎？",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
+    def delete_cell(self):
+        reply = QMessageBox.question(self, "確認刪除", 
+                                     f"確定要刪除格子 \"{self.name}\" 嗎?", 
+                                     QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
-            self.parent().remove_item(self)
+            self.deleteLater()
             
     def get_data(self):
         return {
-            "name": self.name,
-            "image_path": self.image_path,
-            "current_quantity": self.current_quantity,
+            "name": self.name_edit.text(),
+            "img_path": self.img_path,
+            "quantity": self.quantity,
             "max_quantity": self.max_quantity
         }
+    
+    def update_from_config(self):
+        grid_width = self.config.get_grid_width()
+        grid_height = self.config.get_grid_height()
+        padding = self.config.get_padding()
+        border_width = self.config.get_border_width()
+        
+        self.setMinimumSize(grid_width, grid_height)
+        self.setMaximumSize(grid_width, grid_height)
+        
+        # Update frame style with new border width
+        self.setFrameStyle(QFrame.Box | QFrame.Raised)
+        self.setLineWidth(border_width)
+        
+        # Update layout margins
+        layout = self.layout()
+        if layout:
+            layout.setContentsMargins(padding, padding, padding, padding)
+            layout.setSpacing(self.config.get_element_spacing())
+        
+        self.update_image()
 
-class GroupWidget(QFrame):
-    def __init__(self, name="", parent=None, columns=3):
+
+class ResourceGroup(QGroupBox):
+    def __init__(self, name, parent=None, config=None):
         super().__init__(parent)
         self.name = name
-        self.items = []
-        self.columns = columns
-        self.expanded = True
-        self.init_ui()
+        self.config = config
+        self.is_expanded = True
+        self.cells = []
+        self.swap_cell_1 = None
+        self.setup_ui()
         
-    def init_ui(self):
-        self.main_layout = QVBoxLayout(self)
+    def setup_ui(self):
+        self.setTitle(self.name)
+        self.setCheckable(True)
+        self.setChecked(True)
+        self.toggled.connect(self.toggle_expand)
         
-        # Header with group name and controls
+        main_layout = QVBoxLayout(self)
+        
+        # Header controls
         header_layout = QHBoxLayout()
         
-        # Toggle expand/collapse button
-        self.toggle_button = QPushButton("▼")
-        self.toggle_button.setFixedSize(30, 30)
-        self.toggle_button.clicked.connect(self.toggle_expand)
-        
-        # Group name
         self.name_edit = QLineEdit(self.name)
-        self.name_edit.textChanged.connect(self.update_name)
+        self.name_edit.textChanged.connect(self.update_title)
         
-        # Add item button
-        self.add_button = QPushButton("新增格子")
-        self.add_button.clicked.connect(self.add_item)
+        add_cell_btn = QPushButton("新增格子")
+        add_cell_btn.clicked.connect(self.add_cell)
         
-        # Delete group button
-        self.delete_button = QPushButton("刪除群組")
-        self.delete_button.clicked.connect(self.request_delete)
+        delete_group_btn = QPushButton("刪除群組")
+        delete_group_btn.clicked.connect(self.delete_group)
         
-        header_layout.addWidget(self.toggle_button)
         header_layout.addWidget(self.name_edit)
-        header_layout.addWidget(self.add_button)
-        header_layout.addWidget(self.delete_button)
+        header_layout.addWidget(add_cell_btn)
+        header_layout.addWidget(delete_group_btn)
         
-        self.main_layout.addLayout(header_layout)
+        main_layout.addLayout(header_layout)
         
-        # Scroll area for items
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
+        # Cells grid layout
+        self.cells_widget = QWidget()
+        self.cells_layout = QGridLayout(self.cells_widget)
         
-        self.items_container = QWidget()
-        self.items_layout = QGridLayout(self.items_container)
-        self.scroll_area.setWidget(self.items_container)
+        main_layout.addWidget(self.cells_widget)
         
-        self.main_layout.addWidget(self.scroll_area)
+    def update_title(self):
+        self.name = self.name_edit.text()
+        self.setTitle(self.name)
         
-        # Set frame style
-        self.setFrameStyle(QFrame.Panel | QFrame.Raised)
-        self.setLineWidth(2)
+    def toggle_expand(self, checked):
+        self.is_expanded = checked
+        self.cells_widget.setVisible(checked)
         
-    def update_name(self, new_name):
-        self.name = new_name
-
-    def toggle_expand(self):
-        self.expanded = not self.expanded
-        self.toggle_button.setText("▼" if self.expanded else "▶")
-        self.scroll_area.setVisible(self.expanded)
-        
-    def add_item(self, name="", image_path="", current_quantity=0, max_quantity=0):
-        item = ItemWidget(name, image_path, current_quantity, max_quantity, self)
-        self.items.append(item)
-        self.update_items_layout()
-        return item
-
-    def update_items_layout(self):
-        # Clear existing items from layout
-        while self.items_layout.count():
-            item = self.items_layout.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-        
-        # Re-add items in grid format
-        for i, item in enumerate(self.items):
-            row = i // self.columns
-            col = i % self.columns
-            self.items_layout.addWidget(item, row, col)
-            
-    def remove_item(self, item):
-        if item in self.items:
-            self.items.remove(item)
-            item.setParent(None)
-            item.deleteLater()
-            self.update_items_layout()
-        
-    def request_delete(self):
-        if self.items:
-            reply = QMessageBox.question(
-                self, "確認刪除", f"確定要刪除「{self.name}」群組及其所有格子嗎？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-            )
-        else:
-            reply = QMessageBox.question(
-                self, "確認刪除", f"確定要刪除「{self.name}」群組嗎？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-            )
-            
-        if reply == QMessageBox.Yes:
-            # 尋找正確的父級來刪除該群組
-            parent = self.parent()
-            while parent and not hasattr(parent, 'remove_group'):
-                parent = parent.parent()
+    def add_cell(self, name="新格子", img_path="", quantity=0, max_quantity=10):
+        if not img_path:
+            img_path, _ = QFileDialog.getOpenFileName(self, "選擇圖片", "", "圖片檔案 (*.png *.jpg *.jpeg *.bmp)")
+            if not img_path:
+                img_path = "placeholder.png"  # Default placeholder
                 
-            if parent and hasattr(parent, 'remove_group'):
-                parent.remove_group(self)
-            else:
-                QMessageBox.warning(self, "錯誤", "無法找到正確的父級來刪除該群組")
-
-    def set_columns(self, columns):
-        self.columns = columns
-        self.update_items_layout()
+        name = os.path.basename(img_path).split('.')[0] if name == "新格子" else name
+                
+        cell = ResourceCell(name, img_path, quantity, max_quantity, config=self.config)
+        cell.swap_requested.connect(self.handle_swap_request)
+        
+        self.cells.append(cell)
+        
+        # Arrange cells in grid
+        columns = self.config.get_cell_columns()
+        row, col = divmod(len(self.cells) - 1, columns)
+        self.cells_layout.addWidget(cell, row, col)
+        
+    def delete_group(self):
+        reply = QMessageBox.question(self, "確認刪除", 
+                                    f"確定要刪除群組 \"{self.name}\" 和其中所有格子嗎?", 
+                                    QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self.deleteLater()
+            
+    def handle_swap_request(self, cell):
+        if self.swap_cell_1 is None:
+            self.swap_cell_1 = cell
+            cell.setStyleSheet("QFrame { border: 2px solid blue; }")
+            #QMessageBox.information(self, "交換模式", "已選擇第一個格子，請選擇第二個格子進行交換。")
+        else:
+            self.swap_cells(self.swap_cell_1, cell)
+            self.swap_cell_1.setStyleSheet("")
+            self.swap_cell_1 = None
+            
+    def swap_cells(self, cell1, cell2):
+        # Swap data
+        data1 = cell1.get_data()
+        data2 = cell2.get_data()
+        
+        cell1.name = data2["name"]
+        cell1.img_path = data2["img_path"]
+        cell1.quantity = data2["quantity"]
+        cell1.max_quantity = data2["max_quantity"]
+        
+        cell2.name = data1["name"]
+        cell2.img_path = data1["img_path"]
+        cell2.quantity = data1["quantity"]
+        cell2.max_quantity = data1["max_quantity"]
+        
+        # Update UI
+        cell1.name_edit.setText(cell1.name)
+        cell1.update_image()
+        cell1.update_appearance()
+        
+        cell2.name_edit.setText(cell2.name)
+        cell2.update_image()
+        cell2.update_appearance()
         
     def get_data(self):
-        return {
+        group_data = {
             "name": self.name,
-            "items": [item.get_data() for item in self.items]
+            "cells": []
         }
+        
+        for cell in self.cells:
+            if not cell.isHidden() and not cell.isDestroyed():
+                group_data["cells"].append(cell.get_data())
+                
+        return group_data
+    
+    def reorganize_grid(self):
+        # Remove all cells from layout
+        for i in reversed(range(self.cells_layout.count())):
+            self.cells_layout.itemAt(i).widget().setParent(None)
+            
+        # Add cells back using current column setting
+        columns = self.config.get_cell_columns()
+        for i, cell in enumerate(self.cells):
+            if not cell.isHidden() and hasattr(cell, 'isDestroyed') and not cell.isDestroyed():
+                row, col = divmod(i, columns)
+                self.cells_layout.addWidget(cell, row, col)
+                
+    def update_from_config(self):
+        # Update layout settings
+        group_padding = self.config.get_group_padding()
+        element_spacing = self.config.get_element_spacing()
+        
+        if self.layout():
+            self.layout().setContentsMargins(group_padding, group_padding, group_padding, group_padding)
+            self.layout().setSpacing(element_spacing)
+        
+        # Update all cells
+        for cell in self.cells:
+            cell.update_from_config()
+        
+        # Reorganize grid
+        self.reorganize_grid()
 
-class PageWidget(QScrollArea):
-    def __init__(self, name="", parent=None, columns=2):
+class PageWidget(QWidget):
+    def __init__(self, name, parent=None, config=None):
         super().__init__(parent)
         self.name = name
+        self.config = config
         self.groups = []
-        self.columns = columns
-        self.init_ui()
+        self.setup_ui()
         
-    def init_ui(self):
-        self.setWidgetResizable(True)
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
         
-        self.content_widget = QWidget()
-        self.main_layout = QVBoxLayout(self.content_widget)
+        # Header controls
+        header_layout = QHBoxLayout()
         
-        # Add group button
-        self.add_group_button = QPushButton("新建群組")
-        self.add_group_button.clicked.connect(self.add_group)
-        self.main_layout.addWidget(self.add_group_button)
+        add_group_btn = QPushButton("新建群組")
+        add_group_btn.clicked.connect(self.add_group)
         
-        # Groups container
-        self.groups_container = QWidget()
-        self.groups_layout = QGridLayout(self.groups_container)
-        self.main_layout.addWidget(self.groups_container)
+        header_layout.addWidget(add_group_btn)
         
-        # Set this widget as the scroll area's widget
-        self.setWidget(self.content_widget)
+        main_layout.addLayout(header_layout)
         
-    def add_group(self, name=""):
-        if not name:
-            name, ok = QInputDialog.getText(self, "群組名稱", "請輸入群組名稱:")
-            if not ok or not name:
-                name = f"群組 {len(self.groups) + 1}"
-                
-        group = GroupWidget(name, self)
+        # Scroll area for groups
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        
+        self.groups_widget = QWidget()
+        self.groups_layout = QGridLayout(self.groups_widget)
+        
+        scroll_area.setWidget(self.groups_widget)
+        main_layout.addWidget(scroll_area)
+        
+    def add_group(self, name="新群組", cells_data=None):
+        group = ResourceGroup(name, config=self.config)
         self.groups.append(group)
-        self.update_groups_layout()
+        
+        # Arrange groups in grid
+        columns = self.config.get_group_columns()
+        row, col = divmod(len(self.groups) - 1, columns)
+        self.groups_layout.addWidget(group, row, col)
+        
+        # Add cells if data provided
+        if cells_data:
+            for cell_data in cells_data:
+                group.add_cell(
+                    name=cell_data["name"],
+                    img_path=cell_data["img_path"],
+                    quantity=cell_data["quantity"],
+                    max_quantity=cell_data["max_quantity"]
+                )
+                
         return group
-        
-    def update_groups_layout(self):
-        # Clear existing groups from layout
-        while self.groups_layout.count():
-            item = self.groups_layout.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-        
-        # Re-add groups in grid format
-        for i, group in enumerate(self.groups):
-            row = i // self.columns
-            col = i % self.columns
-            self.groups_layout.addWidget(group, row, col)
-            
-    def remove_group(self, group):
-        if group in self.groups:
-            self.groups.remove(group)
-            group.setParent(None)
-            group.deleteLater()
-            self.update_groups_layout()
-
-    def set_columns(self, columns):
-        self.columns = columns
-        self.update_groups_layout()
-        
+    
     def get_data(self):
-        return {
+        page_data = {
             "name": self.name,
-            "groups": [group.get_data() for group in self.groups]
+            "groups": []
         }
+        
+        for group in self.groups:
+            if not group.isHidden():
+                page_data["groups"].append(group.get_data())
+                
+        return page_data
+    
+    def reorganize_grid(self):
+        # Remove all groups from layout
+        for i in reversed(range(self.groups_layout.count())):
+            widget = self.groups_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+            
+        # Add groups back using current column setting
+        columns = self.config.get_group_columns()
+        for i, group in enumerate(self.groups):
+            if not group.isHidden():
+                row, col = divmod(i, columns)
+                self.groups_layout.addWidget(group, row, col)
+    
+    def update_from_config(self):
+        for group in self.groups:
+            group.update_from_config()
+        self.reorganize_grid()
 
-class ResourceManagerApp(QMainWindow):
+class ResourceManager(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.pages = []
-        self.move_mode_active = False
-        self.selected_widget = None
+        self.config = Config()
         self.data_file = "resource_data.csv"
-        self.page_column_value = 3
-        self.group_column_value = 5
+        self.setup_ui()
         
-        self.init_ui()
-        self.load_data()
-        
-    def init_ui(self):
+    def setup_ui(self):
         self.setWindowTitle("資源管理工具")
         self.resize(1200, 800)
         
+        # Main layout
         central_widget = QWidget()
-        self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        
-        # Top controls
-        top_layout = QHBoxLayout()
-        
-        # Add page button
-        self.add_page_button = QPushButton("新建分頁")
-        self.add_page_button.clicked.connect(self.add_page)
-        top_layout.addWidget(self.add_page_button)
-        
-        # Delete page button
-        self.delete_page_button = QPushButton("刪除當前分頁")
-        self.delete_page_button.clicked.connect(self.delete_current_page)
-        top_layout.addWidget(self.delete_page_button)
-        
-        # Toggle move mode button
-        self.move_mode_button = QPushButton("移動模式")
-        self.move_mode_button.setCheckable(True)
-        self.move_mode_button.clicked.connect(self.toggle_move_mode)
-        top_layout.addWidget(self.move_mode_button)
-        
-        # Layout controls
-        top_layout.addWidget(QLabel("分頁每行群組數:"))
-        self.page_columns = QSpinBox()
-        self.page_columns.setRange(1, 10)
-        self.page_columns.setValue(self.page_column_value)
-        self.page_columns.valueChanged.connect(self.update_page_columns)
-        top_layout.addWidget(self.page_columns)
-        
-        top_layout.addWidget(QLabel("群組每行格子數:"))
-        self.group_columns = QSpinBox()
-        self.group_columns.setRange(1, 10)
-        self.group_columns.setValue(self.group_column_value)
-        self.group_columns.valueChanged.connect(self.update_group_columns)
-        top_layout.addWidget(self.group_columns)
-        
-        # Batch import button
-        self.import_button = QPushButton("批量導入圖片")
-        self.import_button.clicked.connect(self.batch_import_images)
-        top_layout.addWidget(self.import_button)
-        
-        # Fit items checkbox
-        self.auto_fit_checkbox = QCheckBox("自適應調整大小")
-        self.auto_fit_checkbox.setChecked(True)
-        self.auto_fit_checkbox.stateChanged.connect(self.toggle_auto_fit)
-        top_layout.addWidget(self.auto_fit_checkbox)
-        
-        main_layout.addLayout(top_layout)
         
         # Tab widget for pages
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.tabCloseRequested.connect(self.close_tab)
+        self.tab_widget.tabBar().tabBarDoubleClicked.connect(self.rename_tab)
+        # Tab controls
+        tab_controls = QHBoxLayout()
+        
+        add_page_btn = QPushButton("新建分頁")
+        add_page_btn.clicked.connect(self.add_page)
+        
+        import_btn = QPushButton("批量導入圖片")
+        import_btn.clicked.connect(self.import_images)
+        
+        settings_btn = QPushButton("設置")
+        settings_btn.clicked.connect(self.open_settings)
+        
+        save_btn = QPushButton("保存數據")
+        save_btn.clicked.connect(self.save_data)
+        
+        load_btn = QPushButton("載入數據")
+        load_btn.clicked.connect(self.load_data)
+        
+        tab_controls.addWidget(add_page_btn)
+        tab_controls.addWidget(import_btn)
+        tab_controls.addWidget(settings_btn)
+        tab_controls.addWidget(save_btn)
+        tab_controls.addWidget(load_btn)
+        
+        main_layout.addLayout(tab_controls)
         main_layout.addWidget(self.tab_widget)
         
-        # Status bar
-        self.statusBar().showMessage("就緒")
+        self.setCentralWidget(central_widget)
         
-        # Save data on close
-        self.save_timer = QTimer()
-        self.save_timer.timeout.connect(self.save_data)
-        self.save_timer.start(30000)  # Save every 30 seconds
+        # Create first page
+        self.add_page()
         
-    def add_page(self, name=""):
-        if not name:
-            name, ok = QInputDialog.getText(self, "分頁名稱", "請輸入分頁名稱:")
-            if not ok or not name:
-                name = f"分頁 {len(self.pages) + 1}"
-                
-        page = PageWidget(name, columns=self.page_columns.value())
-        self.pages.append(page)
+        # Load data if exists
+        if os.path.exists(self.data_file):
+            self.load_data()
+            
+    def add_page(self, name="新分頁", page_data=None):
+        page = PageWidget(name, config=self.config)
         
-        # Add to tab widget
+        # Add a custom name edit
         index = self.tab_widget.addTab(page, name)
         self.tab_widget.setCurrentIndex(index)
         
-        # Connect page name change
-        page.name_changed = lambda new_name: self.tab_widget.setTabText(
-            self.tab_widget.indexOf(page), new_name
-        )
+        # Double click to edit page name
+        self.tab_widget.tabBar().setTabData(index, name)
+        self.tab_widget.tabBar().tabBarDoubleClicked.connect(self.rename_tab)
         
+        # Add groups if data provided
+        if page_data:
+            for group_data in page_data.get("groups", []):
+                page.add_group(
+                    name=group_data["name"],
+                    cells_data=group_data.get("cells", [])
+                )
+                
         return page
+    
+    
+    def rename_tab(self, index):
+        current_name = self.tab_widget.tabBar().tabData(index)
+        new_name, ok = QInputDialog.getText(self, "重命名分頁", "輸入新名稱:", text=current_name)
         
-    def delete_current_page(self):
-        if not self.pages:
-            return
+        if ok and new_name:
+            self.tab_widget.setTabText(index, new_name)
+            self.tab_widget.tabBar().setTabData(index, new_name)
             
-        current_index = self.tab_widget.currentIndex()
-        if current_index < 0:
-            return
-            
-        page = self.pages[current_index]
-        
-        if page.groups:
-            reply = QMessageBox.question(
-                self, "確認刪除", f"確定要刪除「{page.name}」分頁及其所有群組和格子嗎？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-            )
-        else:
-            reply = QMessageBox.question(
-                self, "確認刪除", f"確定要刪除「{page.name}」分頁嗎？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-            )
-            
-        if reply == QMessageBox.Yes:
-            self.tab_widget.removeTab(current_index)
-            self.pages.pop(current_index)
-         
-    def toggle_move_mode(self, checked):
-        self.move_mode_active = checked
-        if checked:
-            self.statusBar().showMessage("移動模式已啟用 - 點擊項目以選擇，再點擊另一個項目以交換位置")
-            self.selected_widget = None
-        else:
-            self.statusBar().showMessage("就緒")
-            self.selected_widget = None
-            
-    def update_page_columns(self, value):
-        self.page_column_value = value
-        for page in self.pages:
-            page.set_columns(value)
-            
-    def update_group_columns(self, value):
-        self.group_column_value = value
-        for page in self.pages:
-            for group in page.groups:
-                group.set_columns(value)
-
+            # Update page name
+            page = self.tab_widget.widget(index)
+            if isinstance(page, PageWidget):
+                page.name = new_name
+    
     def close_tab(self, index):
-        if index < 0 or index >= len(self.pages):
-            return
-            
-        page = self.pages[index]
-        
-        if page.groups:
-            reply = QMessageBox.question(
-                self, "確認刪除", f"確定要刪除「{page.name}」分頁及其所有群組和格子嗎？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-            )
-        else:
-            reply = QMessageBox.question(
-                self, "確認刪除", f"確定要刪除「{page.name}」分頁嗎？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-            )
-            
+        reply = QMessageBox.question(self, "確認刪除", 
+                                    "確定要刪除此分頁和其中所有內容嗎?", 
+                                    QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             self.tab_widget.removeTab(index)
-            self.pages.pop(index)
-             
-    def toggle_auto_fit(self, state):
-        # Implementation for auto-fit functionality
-        # This would require adjusting the widget sizes based on the container size
-        pass
-        
-    def batch_import_images(self):
-        if not self.pages:
-            QMessageBox.warning(self, "警告", "請先創建至少一個分頁")
-            return
             
-        # Select directory containing images
-        directory = QFileDialog.getExistingDirectory(self, "選擇圖片目錄")
-        if not directory:
+            # Create a new page if no pages left
+            if self.tab_widget.count() == 0:
+                self.add_page()
+    
+    def import_images(self):
+        # Select folder with images
+        folder_path = QFileDialog.getExistingDirectory(self, "選擇圖片文件夾")
+        if not folder_path:
             return
-            
-        # Get target group
-        current_page = self.pages[self.tab_widget.currentIndex()]
-        
-        if not current_page.groups:
-            reply = QMessageBox.question(
-                self, "創建群組", "當前分頁沒有群組，是否創建一個新群組？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
-            )
-            if reply == QMessageBox.Yes:
-                group_name, ok = QInputDialog.getText(self, "群組名稱", "請輸入群組名稱:")
-                if not ok:
-                    return
-                target_group = current_page.add_group(group_name)
-            else:
-                return
-        else:
-            # Select group from current page
-            group_names = [group.name for group in current_page.groups]
-            group_name, ok = QInputDialog.getItem(
-                self, "選擇群組", "請選擇要導入圖片的群組:", group_names, 0, False
-            )
-            if not ok:
-                return
-                
-            target_group = current_page.groups[group_names.index(group_name)]
             
         # Get image files
-        image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.gif']
         image_files = []
-        
-        for file in os.listdir(directory):
-            if any(file.lower().endswith(ext) for ext in image_extensions):
-                image_files.append(os.path.join(directory, file))
-                
+        for ext in ['*.png', '*.jpg', '*.jpeg', '*.bmp']:
+            image_files.extend(Path(folder_path).glob(ext))
+            
         if not image_files:
-            QMessageBox.warning(self, "警告", "所選目錄中沒有找到圖片文件")
+            QMessageBox.warning(self, "警告", "找不到圖片文件!")
             return
             
-        # Ask for default max quantity
-        default_max, ok = QInputDialog.getInt(
-            self, "設置默認最大數量", "請設置導入圖片的默認最大數量:", 1, 0, 9999, 1
-        )
+        # Ask to create new page or use current
+        reply = QMessageBox.question(self, "選擇操作", 
+                                    f"找到 {len(image_files)} 張圖片。創建新分頁還是使用當前分頁?",
+                                    QMessageBox.Yes | QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:  # Create new page
+            page = self.add_page(name=f"導入 {len(image_files)} 張圖片")
+        else:  # Use current page
+            index = self.tab_widget.currentIndex()
+            page = self.tab_widget.widget(index)
+            
+        # Create new group for imported images
+        group_name, ok = QInputDialog.getText(self, "群組名稱", "輸入新群組名稱:", text="導入圖片群組")
+        
         if not ok:
-            default_max = 1
+            group_name = "導入圖片群組"
             
-        # Import images
-        progress = QProgressDialog("正在導入圖片...", "取消", 0, len(image_files), self)
-        progress.setWindowModality(Qt.WindowModal)
+        group = page.add_group(name=group_name)
         
-        for i, image_path in enumerate(image_files):
-            if progress.wasCanceled():
-                break
-                
-            # Extract filename without extension as item name
-            name = os.path.splitext(os.path.basename(image_path))[0]
+        # Add images as cells
+        for img_file in image_files:
+            name = img_file.stem
+            group.add_cell(name=name, img_path=str(img_file), quantity=0, max_quantity=10)
             
-            # Create item
-            target_group.add_item(name, image_path, 0, default_max)
-            
-            progress.setValue(i + 1)
-            
-        progress.setValue(len(image_files))
-        self.statusBar().showMessage(f"已成功導入 {len(image_files)} 張圖片")
+        QMessageBox.information(self, "導入完成", f"成功導入 {len(image_files)} 張圖片!")
+    
+    def open_settings(self):
+        # Create backup before changing settings
+        self.create_backup()
         
+        dialog = ConfigDialog(self.config, self)
+        if dialog.exec_():
+            try:
+                # Update visual aspects without reloading data
+                for i in range(self.tab_widget.count()):
+                    page = self.tab_widget.widget(i)
+                    if isinstance(page, PageWidget):
+                        page.update_from_config()
+            except Exception as e:
+                QMessageBox.critical(self, "更新設置失敗", f"更新設置時出錯: {str(e)}")
+                self.restore_from_backup()
+
+    def create_backup(self):
+        """Create backup of current data"""
+        backup_file = self.data_file + ".bak"
+        if os.path.exists(self.data_file):
+            shutil.copy2(self.data_file, backup_file)
+        
+        config_backup = "resource_config.json.bak"
+        if os.path.exists("resource_config.json"):
+            shutil.copy2("resource_config.json", config_backup)
+
+    def restore_from_backup(self):
+        """Restore data from backup if available"""
+        backup_file = self.data_file + ".bak"
+        if os.path.exists(backup_file):
+            shutil.copy2(backup_file, self.data_file)
+            
+        config_backup = "resource_config.json.bak"
+        if os.path.exists(config_backup):
+            shutil.copy2(config_backup, "resource_config.json")
+            
+        # Reload data
+        self.load_data()
+
     def save_data(self):
-        if not self.pages:
-            return
-            
         try:
-            data = []
-            
-            # 保存應用設置
+            # Save configuration to separate config file with all parameters
             config_data = {
-                "page_index": -1,  # 使用特殊索引來表示這是配置數據
-                "page_name": "CONFIG",
-                "group_index": -1,
-                "group_name": "CONFIG",
-                "item_index": -1,
-                "item_name": "CONFIG",
-                "image_path": "",
-                "current_quantity": 0,
-                "max_quantity": 0,
-                "page_columns": self.page_column_value,
-                "group_columns": self.group_column_value
+                "grid_width": self.config.get_grid_width(),
+                "grid_height": self.config.get_grid_height(),
+                "image_size": self.config.get_image_size(),
+                "group_columns": self.config.get_group_columns(),
+                "cell_columns": self.config.get_cell_columns(),
+                "zoom_level": self.config.get_zoom_level(),
+                "border_width": self.config.get_border_width(),
+                "padding": self.config.get_padding(),
+                "group_padding": self.config.get_group_padding(),
+                "element_spacing": self.config.get_element_spacing()
             }
-            data.append(config_data)
+            with open("resource_config.json", 'w', encoding='utf-8') as config_file:
+                json.dump(config_data, config_file)
+        
+            # 按照指定格式保存資料
+            with open(self.data_file, 'w', newline='', encoding='utf-8') as file:
+                writer = csv.writer(file)
+                writer.writerow(["page_index", "page_name", "group_index", "group_name", 
+                           "item_index", "item_name", "image_path", "current_quantity", 
+                           "max_quantity", "page_columns", "group_columns"])
             
-            # 收集所有數據
-            for page_index, page in enumerate(self.pages):
-                page_name = page.name
+                for page_idx in range(self.tab_widget.count()):
+                    page = self.tab_widget.widget(page_idx)
+                    page_name = self.tab_widget.tabText(page_idx)
                 
-                for group_index, group in enumerate(page.groups):
-                    group_name = group.name
-                    
-                    for item_index, item in enumerate(group.items):
-                        item_data = item.get_data()
-                        data.append({
-                            "page_index": page_index,
-                            "page_name": page_name,
-                            "group_index": group_index,
-                            "group_name": group_name,
-                            "item_index": item_index,
-                            "item_name": item_data["name"],
-                            "image_path": item_data["image_path"],
-                            "current_quantity": item_data["current_quantity"],
-                            "max_quantity": item_data["max_quantity"],
-                            "page_columns": self.page_column_value,
-                            "group_columns": self.group_column_value
-                        })
+                    if isinstance(page, PageWidget):
+                        for group_idx, group in enumerate(page.groups):
+                            if group.isHidden():
+                                continue
                         
-            # 保存到CSV
-            with open(self.data_file, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ["page_index", "page_name", "group_index", "group_name", 
-                              "item_index", "item_name", "image_path", "current_quantity", 
-                              "max_quantity", "page_columns", "group_columns"]
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                
-                for row in data:
-                    writer.writerow(row)
-            self.statusBar().showMessage(f"數據已保存至 {self.data_file}")
+                            for cell_idx, cell in enumerate(group.cells):
+                                if cell.isHidden():
+                                    continue
+                            
+                                data = cell.get_data()
+                                row = [
+                                    page_idx,
+                                    page_name,
+                                    group_idx,
+                                    group.name,
+                                    cell_idx,
+                                    data["name"],
+                                    data["img_path"],
+                                    data["quantity"],
+                                    data["max_quantity"],
+                                    self.config.get_group_columns(),
+                                    self.config.get_cell_columns()
+                                ]
+                                writer.writerow(row)
             
+            QMessageBox.information(self, "保存成功", f"數據已保存到 {self.data_file}")
         except Exception as e:
-            QMessageBox.critical(self, "保存錯誤", f"保存數據時發生錯誤: {str(e)}")
-            
+            QMessageBox.critical(self, "保存失敗", f"保存數據出錯: {str(e)}")
+
+
     def load_data(self):
         if not os.path.exists(self.data_file):
             return
             
         try:
-            # Load from CSV
-            with open(self.data_file, 'r', encoding='utf-8') as csvfile:
-                reader = csv.DictReader(csvfile)
-                data = list(reader)
+            # 清除現有標籤
+            while self.tab_widget.count() > 0:
+                self.tab_widget.removeTab(0)
                 
-            if not data:
-                return
-                
-            # Clear existing pages
-            self.tab_widget.clear()
-            self.pages = []
+            pages_data = {}  # 用於存儲頁面數據的字典
             
-            # Process data
-            pages_dict = {}
-            groups_dict = {}
+            # 載入配置（如果存在）
+            if os.path.exists("resource_config.json"):
+                try:
+                    with open("resource_config.json", 'r', encoding='utf-8') as config_file:
+                        config_data = json.load(config_file)
+                        self.config.set_grid_width(config_data.get("grid_width", 100))
+                        self.config.set_grid_height(config_data.get("grid_height", 120))
+                        self.config.set_image_size(config_data.get("image_size", 80))
+                        self.config.set_group_columns(config_data.get("group_columns", 3))
+                        self.config.set_cell_columns(config_data.get("cell_columns", 5))
+                        self.config.set_zoom_level(config_data.get("zoom_level", 100))
+                        self.config.set_border_width(config_data.get("border_width", 1))
+                        self.config.set_padding(config_data.get("padding", 5))
+                        self.config.set_group_padding(config_data.get("group_padding", 10))
+                        self.config.set_element_spacing(config_data.get("element_spacing", 5))
+                except Exception as e:
+                    print(f"Error loading config: {str(e)}")
+                    
+            with open(self.data_file, 'r', newline='', encoding='utf-8') as file:
+                reader = csv.reader(file)
+                next(reader)  # 跳過標題行
+                
+                for row in reader:
+                    if not row or len(row) < 11:
+                        continue
+                        
+                    page_idx, page_name = int(row[0]), row[1]
+                    group_idx, group_name = int(row[2]), row[3]
+                    cell_idx, cell_name = int(row[4]), row[5]
+                    img_path = row[6]
+                    quantity, max_quantity = int(row[7]), int(row[8])
+                    
+                    # 初始化頁面數據（如果不存在）
+                    if page_idx not in pages_data:
+                        pages_data[page_idx] = {"name": page_name, "groups": {}}
+                        
+                    # 初始化群組數據（如果不存在）
+                    if group_idx not in pages_data[page_idx]["groups"]:
+                        pages_data[page_idx]["groups"][group_idx] = {"name": group_name, "cells": []}
+                        
+                    # 添加格子數據
+                    cell_data = {
+                        "name": cell_name,
+                        "img_path": img_path,
+                        "quantity": quantity,
+                        "max_quantity": max_quantity
+                    }
+                    # 檢查格子是否已經存在，避免重複添加
+                    if cell_data not in pages_data[page_idx]["groups"][group_idx]["cells"]:
+                        pages_data[page_idx]["groups"][group_idx]["cells"].append(cell_data)
             
-            for row in data:
-                page_index = int(row["page_index"])
-                page_name = row["page_name"]
-                group_index = int(row["group_index"])
-                group_name = row["group_name"]
-                item_index = int(row["item_index"])
-                item_name = row["item_name"]
-                image_path = row["image_path"]
-                current_quantity = int(row["current_quantity"])
-                max_quantity = int(row["max_quantity"])
+            # 根據載入的數據重建UI
+            for page_idx in sorted(pages_data.keys()):
+                page_data = pages_data[page_idx]
+                page = self.add_page(name=page_data["name"])
                 
-                # Create page if needed
-                if page_index not in pages_dict:
-                    page = self.add_page(page_name)
-                    pages_dict[page_index] = page
-                else:
-                    page = pages_dict[page_index]
+                for group_idx in sorted(page_data["groups"].keys()):
+                    group_data = page_data["groups"][group_idx]
+                    group = page.add_group(name=group_data["name"])
                     
-                # Create group if needed
-                page_group_key = (page_index, group_index)
-                if page_group_key not in groups_dict:
-                    group = page.add_group(group_name)
-                    groups_dict[page_group_key] = group
-                else:
-                    group = groups_dict[page_group_key]
-                    
-                # Create item
-                group.add_item(item_name, image_path, current_quantity, max_quantity)
-                
-            self.statusBar().showMessage(f"數據已從 {self.data_file} 載入")
+                    for cell_data in group_data["cells"]:
+                        group.add_cell(
+                            name=cell_data["name"],
+                            img_path=cell_data["img_path"],
+                            quantity=cell_data["quantity"],
+                            max_quantity=cell_data["max_quantity"]
+                        )
             
         except Exception as e:
-            QMessageBox.critical(self, "載入錯誤", f"載入數據時發生錯誤: {str(e)}")
-            
-    def closeEvent(self, event):
-        self.save_data()
-        event.accept()
+            QMessageBox.critical(self, "載入失敗", f"載入數據出錯: {str(e)}")
+
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # Modern look
-    
+
+
+    # font = QFont()
+    # font.setPointSize(12)  # 設置字體大小為12
+    # app.setFont(font)
+
     # Set dark palette
     dark_palette = QPalette()
     dark_palette.setColor(QPalette.Window, QColor(53, 53, 53))
@@ -812,7 +1055,7 @@ if __name__ == "__main__":
     dark_palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
     dark_palette.setColor(QPalette.HighlightedText, Qt.black)
     app.setPalette(dark_palette)
-    
-    window = ResourceManagerApp()
+
+    window = ResourceManager()
     window.show()
     sys.exit(app.exec())
